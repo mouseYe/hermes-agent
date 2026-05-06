@@ -147,6 +147,19 @@ class GatewayStreamConsumer:
         self._in_think_block = False
         self._think_buffer = ""
 
+    def _standalone_send_metadata(self) -> Optional[dict]:
+        """Metadata for completed standalone sends.
+
+        ``metadata["streaming"]`` is only for messages the consumer will
+        continue editing/finalizing.  Fallback chunks, commentary, fresh-final
+        messages, and overflow chunks are already complete when sent.
+        """
+        if not self.metadata:
+            return self.metadata
+        metadata = dict(self.metadata)
+        metadata.pop("streaming", None)
+        return metadata
+
     @property
     def already_sent(self) -> bool:
         """True if at least one message was sent or edited during the run."""
@@ -588,12 +601,11 @@ class GatewayStreamConsumer:
         if not text.strip():
             return reply_to_id
         try:
-            meta = dict(self.metadata) if self.metadata else {}
             result = await self.adapter.send(
                 chat_id=self.chat_id,
                 content=text,
                 reply_to=reply_to_id,
-                metadata=meta,
+                metadata=self._standalone_send_metadata(),
             )
             if result.success and result.message_id:
                 self._message_id = str(result.message_id)
@@ -701,7 +713,7 @@ class GatewayStreamConsumer:
                 result = await self.adapter.send(
                     chat_id=self.chat_id,
                     content=chunk,
-                    metadata=self.metadata,
+                    metadata=self._standalone_send_metadata(),
                 )
                 if result.success:
                     break
@@ -776,7 +788,7 @@ class GatewayStreamConsumer:
             result = await self.adapter.send(
                 chat_id=self.chat_id,
                 content=tail,
-                metadata=self.metadata,
+                metadata=self._standalone_send_metadata(),
             )
             if result.success:
                 self._already_sent = True
@@ -813,7 +825,7 @@ class GatewayStreamConsumer:
             result = await self.adapter.send(
                 chat_id=self.chat_id,
                 content=text,
-                metadata=self.metadata,
+                metadata=self._standalone_send_metadata(),
             )
             # Note: do NOT set _already_sent = True here.
             # Commentary messages are interim status updates (e.g. "Using browser
@@ -865,7 +877,7 @@ class GatewayStreamConsumer:
             result = await self.adapter.send(
                 chat_id=self.chat_id,
                 content=text,
-                metadata=self.metadata,
+                metadata=self._standalone_send_metadata(),
             )
         except Exception as e:
             logger.debug("Fresh-final send failed, falling back to edit: %s", e)
@@ -1003,7 +1015,7 @@ class GatewayStreamConsumer:
                                 self._MAX_FLOOD_STRIKES,
                                 self._current_edit_interval,
                             )
-                            if self._flood_strikes < self._MAX_FLOOD_STRIKES:
+                            if self._flood_strikes < self._MAX_FLOOD_STRIKES and not finalize:
                                 # Don't disable edits yet — just slow down.
                                 # Update _last_edit_time so the next edit
                                 # respects the new interval.

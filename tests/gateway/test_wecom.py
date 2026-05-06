@@ -260,6 +260,32 @@ class TestWeComReplyMode:
         assert consumer.final_response_sent is True
 
     @pytest.mark.asyncio
+    async def test_fallback_final_sends_markdown_not_unfinished_stream(self):
+        from gateway.stream_consumer import GatewayStreamConsumer, StreamConsumerConfig
+        from gateway.platforms.wecom import WeComAdapter
+
+        adapter = WeComAdapter(PlatformConfig(enabled=True))
+        adapter._last_chat_req_ids["chat-123"] = "req-1"
+        adapter._send_reply_request = AsyncMock(
+            return_value={"headers": {"req_id": "req-1"}, "errcode": 0}
+        )
+
+        consumer = GatewayStreamConsumer(
+            adapter,
+            "chat-123",
+            StreamConsumerConfig(edit_interval=0.01, buffer_threshold=1, cursor=""),
+        )
+        consumer._fallback_prefix = "partial"
+        await consumer._send_fallback_final("partial final tail")
+
+        payload = adapter._send_reply_request.await_args.args[1]
+        assert payload == {
+            "msgtype": "markdown",
+            "markdown": {"content": "final tail"},
+        }
+        assert consumer.final_response_sent is True
+
+    @pytest.mark.asyncio
     async def test_send_image_file_uses_passive_reply_media_when_reply_context_exists(self):
         from gateway.platforms.wecom import WeComAdapter
 
